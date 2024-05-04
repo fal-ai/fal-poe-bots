@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import AsyncIterable
 
+import asyncio
 import os
 import fal_client
 import fastapi_poe as fp
@@ -113,8 +114,40 @@ class RemoveBackgroundBot(FalBaseBot):
         )
 
 
+class CreativeUpscale(FalBaseBot):
+    INTRO_MESSAGE = "This is a bot that upscales the images using the given prompt. Not intended for serious use."
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        if not prompt:
+            prompt = "ultra hd, 4k, high quality"
+            yield fp.PartialResponse(
+                text=f"No prompt provided with the image, using the default prompt: {prompt!r}\n"
+            )
+            await asyncio.sleep(0.2)
+
+        image = parse_image(request)
+        yield fp.PartialResponse(text="Upscaling the image...")
+        handle = await self.fal_client.submit(
+            "fal-ai/controlnet-tile-upscaler",
+            {"image_url": image.url, "prompt": prompt},
+        )
+
+        async for event in fancy_event_handler(handle):
+            yield event
+
+        result = await handle.get()
+        yield fp.PartialResponse(
+            text=f"![image]({result['image']['url']})",
+            is_replace_response=True,
+        )
+
+
 bots = [
     RemoveBackgroundBot(path="/remove-background", access_key=POE_ACCESS_KEY),
+    CreativeUpscale(path="/creative-upscaler", access_key=POE_ACCESS_KEY),
 ]
 
 app = fp.make_app(bots)
