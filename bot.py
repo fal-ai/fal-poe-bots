@@ -192,10 +192,57 @@ class AnimagineXL(FalBaseBot):
         )
 
 
+class RealVisXL(FalBaseBot):
+    INTRO_MESSAGE = (
+        "This is a bot that can generate realistic pictures from your prompts."
+    )
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        if not prompt:
+            raise BotError("No prompt provided with the image.")
+
+        yield fp.PartialResponse(text="Generating a realistic picture...")
+        handle = await self.fal_client.submit(
+            "fal-ai/any-sd",
+            arguments={
+                "model_name": "SG161222/RealVisXL_V4.0",
+                "image_size": {
+                    "width": 832,
+                    "height": 1216,
+                },
+                "prompt": prompt
+                + "8k resolution, best quality, beautiful photograph, dynamic lighting",
+                "negative_prompt": "NSFW, nudity, worst quality, low quality, normal quality, lowres, low details, oversaturated, undersaturated, overexposed, sexual, nude, nudity, human anatomy",
+                "guidance_scale": 7,
+                "num_inference_steps": 25,
+            },
+        )
+
+        async for event in fancy_event_handler(handle):
+            yield event
+
+        result = await handle.get()
+        if result["has_nsfw_concepts"][0]:
+            yield fp.PartialResponse(
+                text="The generated image contains NSFW content, please try again with a different prompt.",
+                is_replace_response=True,
+            )
+            return
+
+        yield fp.PartialResponse(
+            text=f"![image]({result['images'][0]['url']})",
+            is_replace_response=True,
+        )
+
+
 bots = [
     RemoveBackgroundBot(path="/remove-background", access_key=POE_ACCESS_KEY),
     CreativeUpscale(path="/creative-upscaler", access_key=POE_ACCESS_KEY),
     AnimagineXL(path="/animagine-xl", access_key=POE_ACCESS_KEY),
+    RealVisXL(path="/real-vis-xl", access_key=POE_ACCESS_KEY),
 ]
 
 app = fp.make_app(bots)
