@@ -212,6 +212,7 @@ class AnimagineXL(FalBaseBot):
                 "negative_prompt": "nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]",
                 "guidance_scale": 7,
                 "num_inference_steps": 28,
+                "safety_checker_version": "v2",
             },
         )
 
@@ -255,6 +256,7 @@ class RealVisXL(FalBaseBot):
                 "negative_prompt": "NSFW, nudity, worst quality, low quality, normal quality, lowres, low details, oversaturated, undersaturated, overexposed, sexual, nude, nudity, human anatomy",
                 "guidance_scale": 7,
                 "num_inference_steps": 25,
+                "safety_checker_version": "v2",
             },
         )
 
