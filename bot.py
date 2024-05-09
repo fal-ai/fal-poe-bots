@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import AsyncIterable
 
+import mimetypes
 import asyncio
 import os
 import fal_client
+import base64
 import fastapi_poe as fp
 import httpx
 import sentry_sdk
@@ -48,6 +50,32 @@ async def fancy_event_handler(
             yield fp.PartialResponse(text=text, is_replace_response=True)
 
         counter += 1
+
+
+async def response_with_data_url(
+    bot: FalBaseBot, request: fp.QueryRequest, url: str
+) -> fp.PartialResponse:
+    if not url.startswith("data:"):
+        return fp.PartialResponse(
+            text=f"![image]({url})",
+            is_replace_response=True,
+        )
+
+    # Parse a base64 encoded image data URL and return a response with the image.
+    content_type, raw_data = url.removeprefix("data:").split(";", 1)
+    encoding, data = raw_data.split(",", 1)
+    assert encoding == "base64"
+    image_data = base64.b64decode(data)
+    extension = mimetypes.guess_extension(content_type) or ".jpeg"
+
+    await bot.post_message_attachment(
+        message_id=request.message_id,
+        file_data=image_data,
+        file_name="image" + extension,
+    )
+    return fp.PartialResponse(
+        text="The image is too large to display here, but it has been sent as an attachment."
+    )
 
 
 def parse_image(request: fp.QueryRequest) -> fp.Attachment:
@@ -198,10 +226,7 @@ class AnimagineXL(FalBaseBot):
             )
             return
 
-        yield fp.PartialResponse(
-            text=f"![image]({result['images'][0]['url']})",
-            is_replace_response=True,
-        )
+        yield (await response_with_data_url(self, request, result["images"][0]["url"]))
 
 
 class RealVisXL(FalBaseBot):
@@ -244,10 +269,7 @@ class RealVisXL(FalBaseBot):
             )
             return
 
-        yield fp.PartialResponse(
-            text=f"![image]({result['images'][0]['url']})",
-            is_replace_response=True,
-        )
+        yield (await response_with_data_url(self, request, result["images"][0]["url"]))
 
 
 class PixelArtBot(FalBaseBot):
@@ -290,10 +312,7 @@ class PixelArtBot(FalBaseBot):
             )
             return
 
-        yield fp.PartialResponse(
-            text=f"![image]({result['images'][0]['url']})",
-            is_replace_response=True,
-        )
+        yield (await response_with_data_url(self, request, result["images"][0]["url"]))
 
 
 bots = [
