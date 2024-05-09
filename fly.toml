@@ -4,10 +4,7 @@
 #
 
 app = 'poe-fal-bots'
-primary_region = 'lax'
-
-[build]
-  builder = 'paketobuildpacks/builder:base'
+primary_region = 'ord'
 
 [env]
   PORT = '8080'

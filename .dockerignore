@@ -1,1 +1,5 @@
 fly.toml
+.git
+.venv
+.mypy_cache
+.ruff_cache
