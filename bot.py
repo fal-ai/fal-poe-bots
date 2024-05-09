@@ -218,7 +218,7 @@ class RealVisXL(FalBaseBot):
 
         yield fp.PartialResponse(text="Generating a realistic picture...")
         handle = await self.fal_client.submit(
-            "fal-ai/any-sd",
+            "fal-ai/realistic-vision",
             arguments={
                 "model_name": "SG161222/RealVisXL_V4.0",
                 "image_size": {
