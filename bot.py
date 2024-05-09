@@ -7,10 +7,22 @@ import os
 import fal_client
 import fastapi_poe as fp
 import httpx
+import sentry_sdk
+
 from dataclasses import dataclass, field
 from typing import ClassVar
 
 POE_ACCESS_KEY = os.getenv("POE_ACCESS_KEY")
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+
+if SENTRY_DSN:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=1.0,
+        profiles_sample_rate=1.0,
+    )
 
 
 @dataclass
