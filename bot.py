@@ -250,11 +250,58 @@ class RealVisXL(FalBaseBot):
         )
 
 
+class PixelArtBot(FalBaseBot):
+    INTRO_MESSAGE = (
+        "This is a bot that can generate pixel art styled pictures from your prompts."
+    )
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        if not prompt:
+            raise BotError("No prompt provided with the image.")
+
+        yield fp.PartialResponse(text="Generating a pixel art for you...")
+        handle = await self.fal_client.submit(
+            "fal-ai/fast-sdxl",
+            arguments={
+                "prompt": "pixel, " + prompt,
+                "negative_prompt": "NSFW, nudity, overexposed, sexual, nude, nudity, human anatomy, 3D render, cinematic",
+                "guidance_scale": 7,
+                "num_inference_steps": 25,
+                "loras": [
+                    {
+                        "path": "https://huggingface.co/nerijs/pixel-art-xl/resolve/main/pixel-art-xl.safetensors?download=true",
+                        "scale": 1.0,
+                    }
+                ],
+            },
+        )
+
+        async for event in fancy_event_handler(handle):
+            yield event
+
+        result = await handle.get()
+        if result["has_nsfw_concepts"][0]:
+            yield fp.PartialResponse(
+                text="The generated image contains NSFW content, please try again with a different prompt.",
+                is_replace_response=True,
+            )
+            return
+
+        yield fp.PartialResponse(
+            text=f"![image]({result['images'][0]['url']})",
+            is_replace_response=True,
+        )
+
+
 bots = [
     RemoveBackgroundBot(path="/remove-background", access_key=POE_ACCESS_KEY),
     CreativeUpscale(path="/creative-upscaler", access_key=POE_ACCESS_KEY),
     AnimagineXL(path="/animagine-xl", access_key=POE_ACCESS_KEY),
     RealVisXL(path="/real-vis-xl", access_key=POE_ACCESS_KEY),
+    PixelArtBot(path="/pixel-art", access_key=POE_ACCESS_KEY),
 ]
 
 app = fp.make_app(bots)
