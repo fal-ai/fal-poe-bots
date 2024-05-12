@@ -71,7 +71,7 @@ async def response_with_data_url(
     await bot.post_message_attachment(
         message_id=request.message_id,
         file_data=image_data,
-        file_name="image" + extension,
+        filename="image" + extension,
     )
     return fp.PartialResponse(
         text="The image is too large to display here, but it has been sent as an attachment."
