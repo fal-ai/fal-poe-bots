@@ -126,6 +126,7 @@ class FalBaseBot(fp.PoeBot):
         return fp.SettingsResponse(
             allow_attachments=True,
             introduction_message=self.INTRO_MESSAGE,
+            enable_multi_bot_chat_prompting=True,
         )
 
 

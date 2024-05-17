@@ -7,7 +7,7 @@ email_validator==2.1.1
 fal_client==0.4.0
 fastapi==0.110.1
 fastapi-cli==0.0.2
-fastapi_poe==0.0.37
+fastapi_poe==0.0.44
 gunicorn==21.2.0
 h11==0.14.0
 httpcore==1.0.5
