@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import AsyncIterable
 
+import random
 import mimetypes
 import asyncio
 import os
@@ -318,12 +319,44 @@ class PixelArtBot(FalBaseBot):
         yield (await response_with_data_url(self, request, result["images"][0]["url"]))
 
 
+class TurboTextToVideoBot(FalBaseBot):
+    INTRO_MESSAGE = "This is a bot that can generate videos from your prompts. Try with stuff like 'a dog wearing vr goggles on a boat'."
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        if not prompt:
+            raise BotError("No prompt provided with the image.")
+
+        yield fp.PartialResponse(text="Generating the video for you...")
+        handle = await self.fal_client.submit(
+            "fal-ai/t2v-turbo",
+            arguments={
+                "prompt": prompt,
+                "num_inference_steps": random.choice([4, 8]),
+                "num_frames": 32,
+            },
+        )
+
+        async for event in fancy_event_handler(handle):
+            yield event
+
+        result = await handle.get()
+        await self.post_message_attachment(
+            message_id=request.message_id,
+            download_url=result["video"]["url"],
+        )
+        yield fp.PartialResponse(text="Video created!", is_replace_response=True)
+
+
 bots = [
     RemoveBackgroundBot(path="/remove-background", access_key=POE_ACCESS_KEY),
     CreativeUpscale(path="/creative-upscaler", access_key=POE_ACCESS_KEY),
     AnimagineXL(path="/animagine-xl", access_key=POE_ACCESS_KEY),
     RealVisXL(path="/real-vis-xl", access_key=POE_ACCESS_KEY),
     PixelArtBot(path="/pixel-art", access_key=POE_ACCESS_KEY),
+    TurboTextToVideoBot(path="/turbo-text-to-video", access_key=POE_ACCESS_KEY),
 ]
 
 app = fp.make_app(bots)
