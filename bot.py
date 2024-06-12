@@ -350,6 +350,46 @@ class TurboTextToVideoBot(FalBaseBot):
         yield fp.PartialResponse(text="Video created!", is_replace_response=True)
 
 
+class StableDiffusionv32B(FalBaseBot):
+    INTRO_MESSAGE = (
+        "Generate images with stability's latest model with your prompts. Powered by fal.ai."
+    )
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        if not prompt:
+            raise BotError("No prompt provided with the image.")
+
+        yield fp.PartialResponse(text="Generating a picture...")
+        handle = await self.fal_client.submit(
+            "fal-ai/stable-diffusion-v3-medium",
+            arguments={
+                "prompt": prompt,
+                "negative_prompt": "NSFW, nudity, worst quality, low quality, normal quality, lowres, low details, oversaturated, undersaturated, overexposed, sexual, nude, nudity, human anatomy",
+                "guidance_scale": 6,
+                "num_inference_steps": 28,
+                "safety_checker_version": "v2",
+            },
+        )
+
+        async for event in fancy_event_handler(handle):
+            yield event
+
+        result = await handle.get()
+        if result["has_nsfw_concepts"][0]:
+            yield fp.PartialResponse(
+                text="The generated image contains NSFW content, please try again with a different prompt.",
+                is_replace_response=True,
+            )
+            return
+
+        yield (await response_with_data_url(self, request, result["images"][0]["url"]))
+
+
+
+
 bots = [
     RemoveBackgroundBot(path="/remove-background", access_key=POE_ACCESS_KEY),
     CreativeUpscale(path="/creative-upscaler", access_key=POE_ACCESS_KEY),
@@ -357,6 +397,7 @@ bots = [
     RealVisXL(path="/real-vis-xl", access_key=POE_ACCESS_KEY),
     PixelArtBot(path="/pixel-art", access_key=POE_ACCESS_KEY),
     TurboTextToVideoBot(path="/turbo-text-to-video", access_key=POE_ACCESS_KEY),
+    StableDiffusionv32B(path="/stable-diffusion-v3-2b", access_key=POE_ACCESS_KEY),
 ]
 
 app = fp.make_app(bots)
