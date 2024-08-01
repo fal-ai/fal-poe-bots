@@ -459,6 +459,109 @@ class LivePortrait(FalBaseBot):
         yield fp.PartialResponse(text=" ", is_replace_response=True)
 
 
+class FluxPro(FalBaseBot):
+    INTRO_MESSAGE = (
+        "This is a bot that can generate realistic pictures from your prompts."
+    )
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        if not prompt:
+            raise BotError("No prompt provided with the image.")
+
+        yield fp.PartialResponse(text="Generating a picture...")
+        handle = await self.fal_client.submit(
+            "fal-ai/flux-pro",
+            arguments={
+                "prompt": prompt,
+                "safety_tolerance": "5",
+            },
+        )
+
+        async for event in fancy_event_handler(handle):
+            yield event
+
+        result = await handle.get()
+        if result["has_nsfw_concepts"][0]:
+            yield fp.PartialResponse(
+                text="The generated image contains NSFW content, please try again with a different prompt.",
+                is_replace_response=True,
+            )
+            return
+
+        yield (await response_with_data_url(self, request, result["images"][0]["url"]))
+
+
+class FluxDev(FalBaseBot):
+    INTRO_MESSAGE = (
+        "This is a bot that can generate realistic pictures from your prompts."
+    )
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        if not prompt:
+            raise BotError("No prompt provided with the image.")
+
+        yield fp.PartialResponse(text="Generating a picture...")
+        handle = await self.fal_client.submit(
+            "fal-ai/flux/dev",
+            arguments={
+                "prompt": prompt,
+            },
+        )
+
+        async for event in fancy_event_handler(handle):
+            yield event
+
+        result = await handle.get()
+        if result["has_nsfw_concepts"][0]:
+            yield fp.PartialResponse(
+                text="The generated image contains NSFW content, please try again with a different prompt.",
+                is_replace_response=True,
+            )
+            return
+
+        yield (await response_with_data_url(self, request, result["images"][0]["url"]))
+
+
+class FluxSchnell(FalBaseBot):
+    INTRO_MESSAGE = (
+        "This is a bot that can generate realistic pictures from your prompts."
+    )
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        if not prompt:
+            raise BotError("No prompt provided with the image.")
+
+        yield fp.PartialResponse(text="Generating a picture...")
+        handle = await self.fal_client.submit(
+            "fal-ai/flux/schnell",
+            arguments={
+                "prompt": prompt,
+            },
+        )
+
+        async for event in fancy_event_handler(handle):
+            yield event
+
+        result = await handle.get()
+        if result["has_nsfw_concepts"][0]:
+            yield fp.PartialResponse(
+                text="The generated image contains NSFW content, please try again with a different prompt.",
+                is_replace_response=True,
+            )
+            return
+
+        yield (await response_with_data_url(self, request, result["images"][0]["url"]))
+
+
 bots = [
     RemoveBackgroundBot(path="/remove-background", access_key=POE_ACCESS_KEY),
     CreativeUpscale(path="/creative-upscaler", access_key=POE_ACCESS_KEY),
@@ -468,6 +571,9 @@ bots = [
     TurboTextToVideoBot(path="/turbo-text-to-video", access_key=POE_ACCESS_KEY),
     StableDiffusionv32B(path="/stable-diffusion-v3-2b", access_key=POE_ACCESS_KEY),
     LivePortrait(path="/live-portrait", access_key=POE_ACCESS_KEY),
+    FluxPro(path="/flux-pro", access_key=POE_ACCESS_KEY),
+    FluxDev(path="/flux-dev", access_key=POE_ACCESS_KEY),
+    FluxSchnell(path="/flux-schnell", access_key=POE_ACCESS_KEY),
 ]
 
 app = fp.make_app(bots)
