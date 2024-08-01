@@ -351,9 +351,7 @@ class TurboTextToVideoBot(FalBaseBot):
 
 
 class StableDiffusionv32B(FalBaseBot):
-    INTRO_MESSAGE = (
-        "Generate images with stability's latest model with your prompts. Powered by fal.ai."
-    )
+    INTRO_MESSAGE = "Generate images with stability's latest model with your prompts. Powered by fal.ai."
 
     async def execute(
         self, request: fp.QueryRequest
@@ -388,6 +386,77 @@ class StableDiffusionv32B(FalBaseBot):
         yield (await response_with_data_url(self, request, result["images"][0]["url"]))
 
 
+class LivePortrait(FalBaseBot):
+    INTRO_MESSAGE = (
+        "Animates given portraits with the motion's in the video. Powered by fal.ai."
+    )
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        attachments = request.query[-1].attachments
+        if not len(attachments) == 2:
+            raise BotError("Please provide a video and a portrait image.")
+
+        videos = [
+            attachment
+            for attachment in attachments
+            if attachment.content_type.startswith("video/")
+        ]
+        if not videos:
+            raise BotError("No video found, please provide a video as an attachment.")
+        elif len(videos) > 1:
+            raise BotError(
+                "More than one video is found, please provide only one video."
+            )
+        [video] = videos
+
+        images = [
+            attachment
+            for attachment in attachments
+            if attachment.content_type.startswith("image/")
+        ]
+        if not images:
+            raise BotError(
+                "No image found, please provide a single image as an attachment."
+            )
+        elif len(images) > 1:
+            raise BotError(
+                "More than one images are found, please provide only one image."
+            )
+        [image] = images
+
+        yield fp.PartialResponse(text="Animating the portrait...")
+        handle = await self.fal_client.submit(
+            "fal-ai/live-portrait",
+            {
+                "video_url": video.url,
+                "image_url": image.url,
+            },
+        )
+
+        async for event in fancy_event_handler(handle):
+            yield event
+
+        try:
+            result = await handle.get()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 422:
+                raise BotError(e.response.json()["detail"][-1]["msg"])
+            raise
+
+        response = await self.http_client.get(
+            result["video"]["url"], follow_redirects=True
+        )
+        response.raise_for_status()
+
+        await self.post_message_attachment(
+            message_id=request.message_id,
+            file_data=response.content,
+            filename="video.mp4",
+            content_type=response.headers["Content-Type"],
+        )
+        yield fp.PartialResponse(text=" ", is_replace_response=True)
 
 
 bots = [
@@ -398,6 +467,7 @@ bots = [
     PixelArtBot(path="/pixel-art", access_key=POE_ACCESS_KEY),
     TurboTextToVideoBot(path="/turbo-text-to-video", access_key=POE_ACCESS_KEY),
     StableDiffusionv32B(path="/stable-diffusion-v3-2b", access_key=POE_ACCESS_KEY),
+    LivePortrait(path="/live-portrait", access_key=POE_ACCESS_KEY),
 ]
 
 app = fp.make_app(bots)
