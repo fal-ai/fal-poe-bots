@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import AsyncIterable
 
+import re
+import time
 import random
 import mimetypes
 import asyncio
@@ -53,6 +55,17 @@ async def fancy_event_handler(
         counter += 1
 
 
+async def timed_event_handler(
+    handle: fal_client.AsyncRequestHandle,
+) -> AsyncIterable[fp.PartialResponse]:
+    start = time.perf_counter()
+    async for progress in handle.iter_events(with_logs=True, interval=0.05):
+        yield fp.PartialResponse(
+            text=f"Generating image ({int(time.perf_counter() - start)}s elapsed)",
+            is_replace_response=True,
+        )
+
+
 async def response_with_data_url(
     bot: FalBaseBot, request: fp.QueryRequest, url: str
 ) -> fp.PartialResponse:
@@ -96,7 +109,7 @@ def parse_image(request: fp.QueryRequest) -> fp.Attachment:
 
 @dataclass
 class FalBaseBot(fp.PoeBot):
-    INTRO_MESSAGE: ClassVar[str] = "This is a demo bot powered by fal.ai."
+    INTRO_MESSAGE: ClassVar[str | None] = "This is a demo bot powered by fal.ai."
 
     fal_client: fal_client.AsyncClient = field(default_factory=fal_client.AsyncClient)
     http_client: httpx.AsyncClient = field(default_factory=httpx.AsyncClient)
@@ -124,10 +137,13 @@ class FalBaseBot(fp.PoeBot):
         yield
 
     async def get_settings(self, setting: fp.SettingsRequest) -> fp.SettingsResponse:
+        kwargs = {}
+        if self.INTRO_MESSAGE:
+            kwargs["intro_message"] = self.INTRO_MESSAGE
         return fp.SettingsResponse(
             allow_attachments=True,
-            introduction_message=self.INTRO_MESSAGE,
             enable_multi_bot_chat_prompting=True,
+            **kwargs,
         )
 
 
@@ -459,10 +475,45 @@ class LivePortrait(FalBaseBot):
         yield fp.PartialResponse(text=" ", is_replace_response=True)
 
 
+OPTION_RE = re.compile(r"--(\w+)\s+([^\s]+)")
+
+
+def extract_options(input_string):
+    matches = OPTION_RE.findall(input_string)
+    options = {key: value for key, value in matches}
+    cleaned_string = OPTION_RE.sub("", input_string)
+    cleaned_string = " ".join(cleaned_string.split())
+    return options, cleaned_string
+
+
+def parse_aspect_ratio(aspect_ratio, max_size=1024):
+    width_ratio, height_ratio = map(int, aspect_ratio.split(":"))
+    scale = min(max_size / width_ratio, max_size / height_ratio)
+    width = int(width_ratio * scale)
+    height = int(height_ratio * scale)
+    return width, height
+
+
+@dataclass
+class ParsedPrompt:
+    prompt: str
+    width: int
+    height: int
+
+    @classmethod
+    def from_raw(cls, raw_prompt: str) -> ParsedPrompt:
+        options, prompt = extract_options(raw_prompt)
+        try:
+            width, height = parse_aspect_ratio(options.get("aspect", "4:3"))
+        except (ValueError, ArithmeticError):
+            raise BotError(
+                "Invalid aspect ratio provided, use the format 'width_scale:height_scale', like '1:1' or '4:3'."
+            )
+        return cls(prompt=prompt, width=width, height=height)
+
+
 class FluxPro(FalBaseBot):
-    INTRO_MESSAGE = (
-        "This is a bot that can generate realistic pictures from your prompts."
-    )
+    INTRO_MESSAGE = None
 
     async def execute(
         self, request: fp.QueryRequest
@@ -471,16 +522,21 @@ class FluxPro(FalBaseBot):
         if not prompt:
             raise BotError("No prompt provided with the image.")
 
-        yield fp.PartialResponse(text="Generating a picture...")
+        parsed_prompt = ParsedPrompt.from_raw(prompt)
         handle = await self.fal_client.submit(
             "fal-ai/flux-pro",
             arguments={
-                "prompt": prompt,
+                "prompt": parsed_prompt.prompt,
+                "image_size": {
+                    "width": parsed_prompt.width,
+                    "height": parsed_prompt.height,
+                },
                 "safety_tolerance": "5",
+                "num_inference_steps": 40,
             },
         )
 
-        async for event in fancy_event_handler(handle):
+        async for event in timed_event_handler(handle):
             yield event
 
         result = await handle.get()
@@ -495,9 +551,7 @@ class FluxPro(FalBaseBot):
 
 
 class FluxDev(FalBaseBot):
-    INTRO_MESSAGE = (
-        "This is a bot that can generate realistic pictures from your prompts."
-    )
+    INTRO_MESSAGE = None
 
     async def execute(
         self, request: fp.QueryRequest
@@ -506,15 +560,20 @@ class FluxDev(FalBaseBot):
         if not prompt:
             raise BotError("No prompt provided with the image.")
 
-        yield fp.PartialResponse(text="Generating a picture...")
+        parsed_prompt = ParsedPrompt.from_raw(prompt)
         handle = await self.fal_client.submit(
             "fal-ai/flux/dev",
             arguments={
                 "prompt": prompt,
+                "image_size": {
+                    "width": parsed_prompt.width,
+                    "height": parsed_prompt.height,
+                },
+                "num_inference_steps": 40,
             },
         )
 
-        async for event in fancy_event_handler(handle):
+        async for event in timed_event_handler(handle):
             yield event
 
         result = await handle.get()
@@ -529,9 +588,7 @@ class FluxDev(FalBaseBot):
 
 
 class FluxSchnell(FalBaseBot):
-    INTRO_MESSAGE = (
-        "This is a bot that can generate realistic pictures from your prompts."
-    )
+    INTRO_MESSAGE = None
 
     async def execute(
         self, request: fp.QueryRequest
@@ -540,15 +597,19 @@ class FluxSchnell(FalBaseBot):
         if not prompt:
             raise BotError("No prompt provided with the image.")
 
-        yield fp.PartialResponse(text="Generating a picture...")
+        parsed_prompt = ParsedPrompt.from_raw(prompt)
         handle = await self.fal_client.submit(
             "fal-ai/flux/schnell",
             arguments={
                 "prompt": prompt,
+                "image_size": {
+                    "width": parsed_prompt.width,
+                    "height": parsed_prompt.height,
+                },
             },
         )
 
-        async for event in fancy_event_handler(handle):
+        async for event in timed_event_handler(handle):
             yield event
 
         result = await handle.get()
