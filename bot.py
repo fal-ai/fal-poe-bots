@@ -4,6 +4,7 @@ from typing import AsyncIterable
 
 import re
 import time
+import secrets
 import random
 import mimetypes
 import asyncio
@@ -13,6 +14,9 @@ import base64
 import fastapi_poe as fp
 import httpx
 import sentry_sdk
+
+import tempfile
+import zipfile
 
 from dataclasses import dataclass, field
 from typing import ClassVar
@@ -57,11 +61,19 @@ async def fancy_event_handler(
 
 async def timed_event_handler(
     handle: fal_client.AsyncRequestHandle,
+    eta: int | None = None,
+    interval: float = 0.05,
 ) -> AsyncIterable[fp.PartialResponse]:
     start = time.perf_counter()
-    async for progress in handle.iter_events(with_logs=True, interval=0.05):
+    async for progress in handle.iter_events(with_logs=True, interval=interval):
+        timing = int(time.perf_counter() - start)
+        if eta is None or timing > eta:
+            text = f"Generating image ({timing}s elapsed)"
+        else:
+            text = f"Generating image ({int(time.perf_counter() - start)}/{timing}s elapsed)"
+
         yield fp.PartialResponse(
-            text=f"Generating image ({int(time.perf_counter() - start)}s elapsed)",
+            text=text,
             is_replace_response=True,
         )
 
@@ -105,6 +117,19 @@ def parse_image(request: fp.QueryRequest) -> fp.Attachment:
     elif len(images) > 1:
         raise BotError("More than one images are found, please provide only one image.")
     return images[0]
+
+
+def parse_images(request: fp.QueryRequest) -> list[fp.Attachment]:
+    images = [
+        attachment
+        for attachment in request.query[-1].attachments
+        if attachment.content_type.startswith("image/")
+    ]
+    if not images:
+        raise BotError(
+            "No images found, please provide a single image as an attachment."
+        )
+    return images
 
 
 @dataclass
@@ -623,6 +648,107 @@ class FluxSchnell(FalBaseBot):
         yield (await response_with_data_url(self, request, result["images"][0]["url"]))
 
 
+
+async def download_and_zip_images(
+    client: httpx.AsyncClient,
+    images: list[fp.Attachment],
+) -> str:
+    """
+    Download all the image urls in parallel to a temporary directory,
+    zip them, and upload to fal with fal_client.upload_file.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Download images
+        download_tasks = [download_image(client, image, temp_dir) for image in images]
+        download_results = await asyncio.gather(*download_tasks, return_exceptions=True)
+
+        # Process results
+        downloaded_files = []
+        failed_downloads = 0
+        for result in download_results:
+            if result:
+                downloaded_files.append(result)
+            else:
+                failed_downloads += 1
+
+        # Check if too many downloads failed
+        if failed_downloads > len(images) // 2:
+            raise Exception(
+                f"More than 50% of images failed to download ({failed_downloads}/{len(images)})"
+            )
+
+        if not downloaded_files:
+            raise Exception("No images were successfully downloaded")
+
+        # Create zip file
+        zip_path = os.path.join(temp_dir, "images.zip")
+        with zipfile.ZipFile(zip_path, "w") as zip_file:
+            for file_path in downloaded_files:
+                zip_file.write(file_path, os.path.basename(file_path))
+
+        uploaded_file_id = await fal_client.upload_file_async(zip_path)
+        return uploaded_file_id
+
+
+async def download_image(
+    client: httpx.AsyncClient, image: fp.Attachment, temp_dir: str
+) -> str | None:
+    """Download a single image and return its file path."""
+    if not (extension := mimetypes.guess_extension(image.content_type)):
+        print(f"Unknown content type: {image.content_type}")
+        return None
+
+    file_name = secrets.token_hex(8) + extension
+    try:
+        response = await client.get(image.url)
+        response.raise_for_status()
+        file_name = os.path.join(temp_dir, file_name)
+        with open(file_name, "wb") as f:
+            f.write(response.content)
+        return file_name
+    except httpx.HTTPStatusError as e:
+        print(f"HTTP error occurred while downloading {image.url}: {e}")
+    except httpx.RequestError as e:
+        print(f"An error occurred while requesting {image.url}: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred while downloading {image.url}: {e}")
+    return None
+
+
+class FluxFinetuning(FalBaseBot):
+    INTRO_MESSAGE = None
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        images = parse_images(request)
+        if len(images) <= 4:
+            raise BotError("Please provide at least 5 images for fine-tuning.")
+        elif len(images) > 20:
+            raise BotError("Please provide less than 20 images for fine-tuning.")
+
+        zip_url = await download_and_zip_images(
+            self.http_client,
+            images=images,
+        )
+        handle = await self.fal_client.submit(
+            "fal-ai/flux-lora-fast-training",
+            arguments={
+                "images_data_url": zip_url,
+                "trigger_word": "ohwx",
+            },
+        )
+
+        async for event in timed_event_handler(handle, interval=0.8, eta=300):
+            yield event
+
+        result = await handle.get()
+        yield fp.PartialResponse(
+            text=f"key: `{result['diffusers_lora_file']['url']}`",
+            is_replace_response=True,
+        )
+
+
 bots = [
     RemoveBackgroundBot(path="/remove-background", access_key=POE_ACCESS_KEY),
     CreativeUpscale(path="/creative-upscaler", access_key=POE_ACCESS_KEY),
@@ -635,6 +761,7 @@ bots = [
     FluxPro(path="/flux-pro", access_key=POE_ACCESS_KEY),
     FluxDev(path="/flux-dev", access_key=POE_ACCESS_KEY),
     FluxSchnell(path="/flux-schnell", access_key=POE_ACCESS_KEY),
+    FluxFinetuning(path="/flux-finetuning", access_key=POE_ACCESS_KEY),
 ]
 
 app = fp.make_app(bots)
