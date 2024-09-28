@@ -70,7 +70,7 @@ async def timed_event_handler(
         if eta is None or timing > eta:
             text = f"Generating image ({timing}s elapsed)"
         else:
-            text = f"Generating image ({int(time.perf_counter() - start)}/{timing}s elapsed)"
+            text = f"Generating image ({int(time.perf_counter() - start)}/{eta}s elapsed)"
 
         yield fp.PartialResponse(
             text=text,
@@ -524,6 +524,7 @@ class ParsedPrompt:
     prompt: str
     width: int
     height: int
+    options: dict[str, str]
 
     @classmethod
     def from_raw(cls, raw_prompt: str) -> ParsedPrompt:
@@ -534,7 +535,7 @@ class ParsedPrompt:
             raise BotError(
                 "Invalid aspect ratio provided, use the format 'width_scale:height_scale', like '1:1' or '4:3'."
             )
-        return cls(prompt=prompt, width=width, height=height)
+        return cls(prompt=prompt, width=width, height=height, options=options)
 
 
 class FluxPro(FalBaseBot):
@@ -589,7 +590,7 @@ class FluxDev(FalBaseBot):
         handle = await self.fal_client.submit(
             "fal-ai/flux/dev",
             arguments={
-                "prompt": prompt,
+                "prompt": parsed_prompt.prompt,
                 "image_size": {
                     "width": parsed_prompt.width,
                     "height": parsed_prompt.height,
@@ -626,7 +627,7 @@ class FluxSchnell(FalBaseBot):
         handle = await self.fal_client.submit(
             "fal-ai/flux/schnell",
             arguments={
-                "prompt": prompt,
+                "prompt": parsed_prompt.prompt,
                 "image_size": {
                     "width": parsed_prompt.width,
                     "height": parsed_prompt.height,
@@ -646,7 +647,6 @@ class FluxSchnell(FalBaseBot):
             return
 
         yield (await response_with_data_url(self, request, result["images"][0]["url"]))
-
 
 
 async def download_and_zip_images(
@@ -736,6 +736,7 @@ class FluxFinetuning(FalBaseBot):
             arguments={
                 "images_data_url": zip_url,
                 "trigger_word": "ohwx",
+                "iter_multiplier": min(1, len(images) * 0.1),
             },
         )
 
@@ -747,6 +748,53 @@ class FluxFinetuning(FalBaseBot):
             text=f"key: `{result['diffusers_lora_file']['url']}`",
             is_replace_response=True,
         )
+
+
+class FluxDevFinetunes(FalBaseBot):
+    INTRO_MESSAGE = None
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        if not prompt:
+            raise BotError("No prompt provided with the image.")
+
+        parsed_prompt = ParsedPrompt.from_raw(prompt)
+        if not (lora := parsed_prompt.options.get("lora")):
+            raise BotError("Please provide a lora key with the prompt.")
+
+        handle = await self.fal_client.submit(
+            "fal-ai/flux-lora",
+            arguments={
+                "prompt": parsed_prompt.prompt,
+                "image_size": {
+                    "width": parsed_prompt.width,
+                    "height": parsed_prompt.height,
+                },
+                "num_inference_steps": 40,
+                "loras": [
+                    {
+                        "path": lora,
+                        "scale": 1.0,
+                    }
+                ],
+            },
+        )
+
+        async for event in timed_event_handler(handle):
+            yield event
+
+        result = await handle.get()
+        print(result)
+        if result["has_nsfw_concepts"][0]:
+            yield fp.PartialResponse(
+                text="The generated image contains NSFW content, please try again with a different prompt.",
+                is_replace_response=True,
+            )
+            return
+
+        yield (await response_with_data_url(self, request, result["images"][0]["url"]))
 
 
 bots = [
@@ -762,6 +810,7 @@ bots = [
     FluxDev(path="/flux-dev", access_key=POE_ACCESS_KEY),
     FluxSchnell(path="/flux-schnell", access_key=POE_ACCESS_KEY),
     FluxFinetuning(path="/flux-finetuning", access_key=POE_ACCESS_KEY),
+    FluxDevFinetunes(path="/flux-dev-finetunes", access_key=POE_ACCESS_KEY),
 ]
 
 app = fp.make_app(bots)
