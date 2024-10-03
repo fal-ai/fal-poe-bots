@@ -70,7 +70,9 @@ async def timed_event_handler(
         if eta is None or timing > eta:
             text = f"Generating image ({timing}s elapsed)"
         else:
-            text = f"Generating image ({int(time.perf_counter() - start)}/{eta}s elapsed)"
+            text = (
+                f"Generating image ({int(time.perf_counter() - start)}/{eta}s elapsed)"
+            )
 
         yield fp.PartialResponse(
             text=text,
@@ -576,6 +578,43 @@ class FluxPro(FalBaseBot):
         yield (await response_with_data_url(self, request, result["images"][0]["url"]))
 
 
+class FluxProV11(FalBaseBot):
+    INTRO_MESSAGE = None
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        if not prompt:
+            raise BotError("No prompt provided with the image.")
+
+        parsed_prompt = ParsedPrompt.from_raw(prompt)
+        handle = await self.fal_client.submit(
+            "fal-ai/flux-pro/v1.1",
+            arguments={
+                "prompt": parsed_prompt.prompt,
+                "image_size": {
+                    "width": parsed_prompt.width,
+                    "height": parsed_prompt.height,
+                },
+                "safety_tolerance": "5",
+            },
+        )
+
+        async for event in timed_event_handler(handle):
+            yield event
+
+        result = await handle.get()
+        if result["has_nsfw_concepts"][0]:
+            yield fp.PartialResponse(
+                text="The generated image contains NSFW content, please try again with a different prompt.",
+                is_replace_response=True,
+            )
+            return
+
+        yield (await response_with_data_url(self, request, result["images"][0]["url"]))
+
+
 class FluxDev(FalBaseBot):
     INTRO_MESSAGE = None
 
@@ -807,6 +846,7 @@ bots = [
     StableDiffusionv32B(path="/stable-diffusion-v3-2b", access_key=POE_ACCESS_KEY),
     LivePortrait(path="/live-portrait", access_key=POE_ACCESS_KEY),
     FluxPro(path="/flux-pro", access_key=POE_ACCESS_KEY),
+    FluxProV11(path="/flux-pro-v11", access_key=POE_ACCESS_KEY),
     FluxDev(path="/flux-dev", access_key=POE_ACCESS_KEY),
     FluxSchnell(path="/flux-schnell", access_key=POE_ACCESS_KEY),
     FluxFinetuning(path="/flux-finetuning", access_key=POE_ACCESS_KEY),
