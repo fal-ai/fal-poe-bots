@@ -4,6 +4,7 @@ from typing import AsyncIterable
 
 import re
 import time
+import urllib.parse
 import secrets
 import random
 import mimetypes
@@ -63,16 +64,15 @@ async def timed_event_handler(
     handle: fal_client.AsyncRequestHandle,
     eta: int | None = None,
     interval: float = 0.05,
+    process: str = "Generating image",
 ) -> AsyncIterable[fp.PartialResponse]:
     start = time.perf_counter()
     async for progress in handle.iter_events(with_logs=True, interval=interval):
         timing = int(time.perf_counter() - start)
         if eta is None or timing > eta:
-            text = f"Generating image ({timing}s elapsed)"
+            text = f"{process} ({timing}s elapsed)"
         else:
-            text = (
-                f"Generating image ({int(time.perf_counter() - start)}/{eta}s elapsed)"
-            )
+            text = f"{process} ({int(time.perf_counter() - start)}/{eta}s elapsed)"
 
         yield fp.PartialResponse(
             text=text,
@@ -626,16 +626,23 @@ class FluxDev(FalBaseBot):
             raise BotError("No prompt provided with the image.")
 
         parsed_prompt = ParsedPrompt.from_raw(prompt)
-        handle = await self.fal_client.submit(
-            "fal-ai/flux/dev",
-            arguments={
-                "prompt": parsed_prompt.prompt,
-                "image_size": {
-                    "width": parsed_prompt.width,
-                    "height": parsed_prompt.height,
-                },
-                "num_inference_steps": 40,
+        arguments = {
+            "prompt": parsed_prompt.prompt,
+            "image_size": {
+                "width": parsed_prompt.width,
+                "height": parsed_prompt.height,
             },
+            "num_inference_steps": 40,
+        }
+        if lora := parsed_prompt.options.get("lora"):
+            arguments["loras"] = [{"path": lora, "scale": 1.0}]
+            endpoint = "fal-ai/flux-lora"
+        else:
+            endpoint = "fal-ai/flux/dev"
+
+        handle = await self.fal_client.submit(
+            endpoint,
+            arguments=arguments,
         )
 
         async for event in timed_event_handler(handle):
@@ -775,16 +782,57 @@ class FluxFinetuning(FalBaseBot):
             arguments={
                 "images_data_url": zip_url,
                 "trigger_word": "ohwx",
-                "iter_multiplier": min(1, len(images) * 0.1),
+                "steps": max(1000, 100 * len(images)),
             },
         )
 
-        async for event in timed_event_handler(handle, interval=0.8, eta=300):
+        async for event in timed_event_handler(
+            handle, interval=0.8, eta=300, process="Training model"
+        ):
             yield event
 
         result = await handle.get()
+        lora_key = result["diffusers_lora_file"]["url"]
+        bot_prompt = urllib.parse.quote_plus(f"--lora {lora_key} a photo of ohwx ")
+
+        # Generate 2 sample images
+        sample_images = await self.fal_client.submit(
+            "fal-ai/flux-lora",
+            arguments={
+                "prompt": "a photo of ohwx",
+                "num_inference_steps": 40,
+                "loras": [
+                    {
+                        "path": lora_key,
+                        "scale": 1.0,
+                    }
+                ],
+                "image_size": "square_hd",
+                "num_images": 2,
+                "enable_safety_checker": False,
+            },
+        )
+
+        async for event in timed_event_handler(
+            sample_images, eta=15, process="Generating sample images"
+        ):
+            yield event
+
+        sample_results = await sample_images.get()
+        image_1, image_2 = (
+            sample_results["images"][0]["url"],
+            sample_results["images"][1]["url"],
+        )
+
+        text = [
+            f"[Click here to create your own FLUX bot](https://poe.com/create_bot?prompt={bot_prompt}&baseBot=FLUX-dev)\n",
+            "\n\n",
+            "Sample images:\n",
+            f"![image 1]({image_1})",
+            f"![image 2]({image_2})",
+        ]
         yield fp.PartialResponse(
-            text=f"key: `{result['diffusers_lora_file']['url']}`",
+            text="".join(text),
             is_replace_response=True,
         )
 
@@ -825,7 +873,6 @@ class FluxDevFinetunes(FalBaseBot):
             yield event
 
         result = await handle.get()
-        print(result)
         if result["has_nsfw_concepts"][0]:
             yield fp.PartialResponse(
                 text="The generated image contains NSFW content, please try again with a different prompt.",
