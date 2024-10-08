@@ -129,7 +129,7 @@ def parse_images(request: fp.QueryRequest) -> list[fp.Attachment]:
     ]
     if not images:
         raise BotError(
-            "No images found, please provide a single image as an attachment."
+            "No images found, please provide images as attachments."
         )
     return images
 
