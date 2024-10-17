@@ -127,10 +127,6 @@ def parse_images(request: fp.QueryRequest) -> list[fp.Attachment]:
         for attachment in request.query[-1].attachments
         if attachment.content_type.startswith("image/")
     ]
-    if not images:
-        raise BotError(
-            "No images found, please provide images as attachments."
-        )
     return images
 
 
@@ -155,7 +151,7 @@ class FalBaseBot(fp.PoeBot):
             async for response in self.execute(request):
                 yield response
         except BotError as e:
-            yield fp.PartialResponse(text=str(e))
+            yield fp.ErrorResponse(text=str(e))
 
     async def execute(
         self, request: fp.QueryRequest
@@ -883,6 +879,66 @@ class FluxDevFinetunes(FalBaseBot):
         yield (await response_with_data_url(self, request, result["images"][0]["url"]))
 
 
+class MiniMaxVideo(FalBaseBot):
+    INTRO_MESSAGE = None
+
+    async def execute(
+        self, request: fp.QueryRequest
+    ) -> AsyncIterable[fp.PartialResponse]:
+        prompt = request.query[-1].content
+        images = parse_images(request)
+        if images:
+            if len(images) > 1:
+                raise BotError("Please provide only one image as an attachment.")
+
+            payload = {
+                "prompt": prompt or "",
+                "image_url": images[0].url,
+            }
+            model_name = "fal-ai/minimax-video/image-to-video"
+        elif prompt:
+            payload = {
+                "prompt": prompt,
+            }
+            model_name = "fal-ai/minimax-video"
+        else:
+            raise BotError("Please provide a prompt or an image as the input.")
+
+        handle = await self.fal_client.submit(
+            model_name,
+            arguments=payload,
+        )
+
+        async for event in timed_event_handler(
+            handle,
+            process="Generating video",
+            interval=3,
+            eta=300,
+        ):
+            yield event
+
+        try:
+            result = await handle.get()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 422:
+                raise BotError(e.response.json()["detail"])
+            raise
+
+        response = await self.http_client.get(
+            result["video"]["url"],
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+
+        await self.post_message_attachment(
+            message_id=request.message_id,
+            file_data=response.content,
+            filename="video.mp4",
+            content_type=response.headers["Content-Type"],
+        )
+        yield fp.PartialResponse(text=" ", is_replace_response=True)
+
+
 bots = [
     RemoveBackgroundBot(path="/remove-background", access_key=POE_ACCESS_KEY),
     CreativeUpscale(path="/creative-upscaler", access_key=POE_ACCESS_KEY),
@@ -898,6 +954,7 @@ bots = [
     FluxSchnell(path="/flux-schnell", access_key=POE_ACCESS_KEY),
     FluxFinetuning(path="/flux-finetuning", access_key=POE_ACCESS_KEY),
     FluxDevFinetunes(path="/flux-dev-finetunes", access_key=POE_ACCESS_KEY),
+    MiniMaxVideo(path="/minimax-video", access_key=POE_ACCESS_KEY),
 ]
 
 app = fp.make_app(bots)
