@@ -920,7 +920,7 @@ class MiniMaxVideo(FalBaseBot):
         try:
             result = await handle.get()
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 422:
+            if e.response.status_code == 400:
                 raise BotError(e.response.json()["detail"])
             raise
 
